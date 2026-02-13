@@ -27,4 +27,4 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           TO_EMAILS: ${{ secrets.TO_EMAILS }}
-        run: python overnight_returns.py .\futures_input.csv --email rahulgupta1096@gmail.com
+        run: python overnight_returns.py futures_input.csv --email rahulgupta1096@gmail.com
