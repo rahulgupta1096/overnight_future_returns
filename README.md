@@ -54,6 +54,16 @@ python overnight_returns.py futures_input.csv --email you@example.com
 
 You can combine options: `-o returns.csv --email you@example.com` writes the CSV, sends an email with the table in the body, and attaches the CSV.
 
+**Return period (`--period`):**
+
+| Value  | Description |
+|--------|--------------|
+| `5pm`  | Return since the most recent 5pm Central (default). |
+| `wtd`  | Week-to-date (since start of current week, Monday). |
+| `mtd`  | Month-to-date (since the 1st of the current month). |
+
+Example: `python overnight_returns.py futures_input.csv --period wtd`
+
 ### SMTP setup (for email/text)
 
 The script uses your SMTP server to send mail. Set these environment variables:
@@ -78,13 +88,13 @@ python overnight_returns.py futures_input.csv --email 5551234567@vtext.com
 
 For each ticker you get:
 
-| Column               | Description                                                                 |
-|----------------------|-----------------------------------------------------------------------------|
-| `ticker`             | Futures symbol                                                              |
-| `name`               | Name/description of the contract (from Yahoo Finance)                       |
-| `price_5pm_ct`       | Price at the most recent 5pm Central (2 decimal places)                     |
-| `price_current`      | Latest available price (2 decimal places)                                   |
-| `return_since_5pm_ct`| Return from 5pm CT to now, in percent (e.g. `3.78%`, `-1.25%`)               |
+| Column          | Description                                                                 |
+|-----------------|-----------------------------------------------------------------------------|
+| `ticker`        | Futures symbol                                                              |
+| `name`          | Name/description of the contract (from Yahoo Finance)                       |
+| `price_start`   | Price at the period start (2 decimal places)                                |
+| `price_current` | Latest available price (2 decimal places)                                   |
+| `return_pct`    | Return over the period, in percent (e.g. `3.78%`, `-1.25%`)                  |
 
 The **5pm Central** reference is computed in `America/Chicago` (CST/CDT). The script uses hourly data when available to approximate the price at that time; otherwise it uses the previous trading day’s close.
 

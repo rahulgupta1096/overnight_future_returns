@@ -20,15 +20,65 @@ import pytz
 CENTRAL = pytz.timezone("America/Chicago")
 
 
+from datetime import timedelta
+
+PERIOD_5PM = "5pm"
+PERIOD_WTD = "wtd"
+PERIOD_MTD = "mtd"
+PERIOD_CHOICES = (PERIOD_5PM, PERIOD_WTD, PERIOD_MTD)
+
+
 def get_most_recent_5pm_ct():
-    """Return the datetime of the most recent 5pm Central (naive in CT, for comparison with yfinance)."""
+    """Return the datetime of the most recent 5pm Central (timezone-aware)."""
     now_ct = pd.Timestamp.now(tz=CENTRAL)
     today_5pm = now_ct.replace(hour=17, minute=0, second=0, microsecond=0)
     if now_ct >= today_5pm:
         return today_5pm
-    # Before 5pm today -> use yesterday 5pm
-    from datetime import timedelta
     return today_5pm - timedelta(days=1)
+
+
+def get_ref_for_period(period: str) -> tuple[pd.Timestamp | None, str]:
+    """
+    Return (reference datetime or date, period label) for the given period.
+    For 5pm: ref is the most recent 5pm CT (datetime).
+    For wtd: ref is the Monday of the current week (date only, 00:00 CT).
+    For mtd: ref is the 1st of the current month (date only, 00:00 CT).
+    """
+    now_ct = pd.Timestamp.now(tz=CENTRAL)
+    if period == PERIOD_5PM:
+        return get_most_recent_5pm_ct(), "since 5pm CT"
+    if period == PERIOD_WTD:
+        # Monday = 0 in Python weekday
+        days_since_monday = now_ct.weekday()
+        monday = now_ct - timedelta(days=days_since_monday)
+        ref_date = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        return ref_date, "week-to-date"
+    if period == PERIOD_MTD:
+        ref_date = now_ct.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return ref_date, "month-to-date"
+    return None, ""
+
+
+def price_at_date(ticker: str, ref_date: pd.Timestamp) -> float | None:
+    """Get the close price on ref_date or the most recent trading day on or before ref_date."""
+    ref_ts = pd.Timestamp(ref_date)
+    ref_utc = ref_ts.astimezone(pytz.UTC) if ref_ts.tzinfo else ref_ts
+    ref_naive = ref_utc.replace(tzinfo=None)
+    try:
+        start = ref_naive - timedelta(days=30)
+        end = ref_naive + timedelta(days=1)
+        hist = yf.Ticker(ticker).history(start=start, end=end, timeout=10)
+    except Exception:
+        return None
+    if hist.empty:
+        return None
+    hist_idx = hist.index
+    if hist_idx.tz is not None:
+        hist_idx = hist_idx.tz_convert(pytz.UTC).tz_localize(None)
+    before = hist[hist_idx <= ref_naive]
+    if before.empty:
+        return None
+    return float(before["Close"].iloc[-1])
 
 
 def price_at_5pm_ct(ticker: str, ref_time: pd.Timestamp) -> float | None:
@@ -78,6 +128,13 @@ def current_price(ticker: str) -> float | None:
     return float(hist["Close"].iloc[-1])
 
 
+def price_at_reference(ticker: str, period: str, ref: pd.Timestamp) -> float | None:
+    """Get the price at the reference time/date for the given period."""
+    if period == PERIOD_5PM:
+        return price_at_5pm_ct(ticker, ref)
+    return price_at_date(ticker, ref)
+
+
 def ticker_name(ticker: str) -> str:
     """Return short name/description for the ticker from yfinance, or the ticker symbol if unavailable."""
     try:
@@ -101,8 +158,8 @@ def format_table_aligned(df: pd.DataFrame) -> str:
     for c in cols:
         content_max = int(df_str[c].str.len().max()) if len(df_str) else 0
         widths.append(max(len(str(c)), content_max))
-    # Right-align: price_5pm_ct, price_current, return_since_5pm_ct
-    right_cols = {"price_5pm_ct", "price_current", "return_since_5pm_ct"}
+    # Right-align numeric columns
+    right_cols = {"price_start", "price_current", "return_pct"}
     lines = []
     for row in df_str.itertuples(index=False):
         parts = []
@@ -134,7 +191,7 @@ def read_tickers_from_csv(path: str) -> list[str]:
 
 def dataframe_to_html_email(df: pd.DataFrame, title: str) -> str:
     """Return a full HTML document with a styled table for email. Rows are green if return > 0, red if return < 0."""
-    return_col = "return_since_5pm_ct"
+    return_col = "return_pct"
     cols = df.columns.tolist()
 
     def row_bg_style(row) -> str:
@@ -184,13 +241,17 @@ th {{ background-color: #f0f0f0; font-weight: bold; }}
 
 
 def send_email(
-    to_address: str,
+    to_addresses: str | list[str],
     subject: str,
     body_text: str,
     body_html: str | None = None,
     csv_path: str | None = None,
 ) -> None:
     """Send an email using SMTP. Credentials from env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD."""
+    if isinstance(to_addresses, str):
+        to_addresses = [to_addresses]
+    to_addresses = [a.strip() for a in to_addresses if a and str(a).strip()]
+
     host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER")
@@ -204,10 +265,14 @@ def send_email(
         print("  Example (Gmail): set SMTP_USER=you@gmail.com and SMTP_APP_PASSWORD=<app password>", file=sys.stderr)
         sys.exit(1)
 
+    if not to_addresses:
+        print("Error: No email addresses provided.", file=sys.stderr)
+        sys.exit(1)
+
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = user
-    msg["To"] = to_address
+    msg["To"] = ", ".join(to_addresses)
 
     if body_html:
         alt = MIMEMultipart("alternative")
@@ -227,7 +292,7 @@ def send_email(
     with smtplib.SMTP(host, port) as server:
         server.starttls()
         server.login(user, password)
-        server.sendmail(user, [to_address], msg.as_string())
+        server.sendmail(user, to_addresses, msg.as_string())
 
 
 def main():
@@ -248,9 +313,17 @@ def main():
     parser.add_argument(
         "--email",
         type=str,
+        nargs="*",
         metavar="ADDRESS",
         default=None,
-        help="Send the report to this email (or use carrier email-to-SMS for text, e.g. 5551234567@vtext.com).",
+        help="Send the report to these emails (can pass multiple: --email a@x.com b@y.com). Use carrier email-to-SMS for text (e.g. 5551234567@vtext.com).",
+    )
+    parser.add_argument(
+        "--period",
+        type=str,
+        choices=PERIOD_CHOICES,
+        default=PERIOD_5PM,
+        help="Return period: 5pm (since most recent 5pm CT), wtd (week-to-date), mtd (month-to-date). Default: 5pm.",
     )
     args = parser.parse_args()
 
@@ -264,23 +337,23 @@ def main():
         print("Error: no tickers found in CSV.", file=sys.stderr)
         sys.exit(1)
 
-    ref_time = get_most_recent_5pm_ct()
+    ref, period_label = get_ref_for_period(args.period)
     rows = []
 
     for ticker in tickers:
-        p_5pm = price_at_5pm_ct(ticker, ref_time)
+        p_start = price_at_reference(ticker, args.period, ref)
         p_now = current_price(ticker)
-        if p_5pm is None or p_now is None or p_5pm <= 0:
+        if p_start is None or p_now is None or p_start <= 0:
             ret_pct = None
         else:
-            ret_decimal = (p_now - p_5pm) / p_5pm
+            ret_decimal = (p_now - p_start) / p_start
             ret_pct = f"{round(ret_decimal * 100, 2)}%"
         rows.append({
             "ticker": ticker,
             "name": ticker_name(ticker),
-            "price_5pm_ct": round(p_5pm, 2) if p_5pm is not None else None,
+            "price_start": round(p_start, 2) if p_start is not None else None,
             "price_current": round(p_now, 2) if p_now is not None else None,
-            "return_since_5pm_ct": ret_pct,
+            "return_pct": ret_pct,
         })
 
     out = pd.DataFrame(rows)
@@ -294,13 +367,14 @@ def main():
     if not args.output:
         print(table_str)
 
-    if args.email:
-        ref_ct = get_most_recent_5pm_ct()
-        subject = f"Futures returns since 5pm CT ({ref_ct.strftime('%Y-%m-%d %H:%M')} CT)"
-        body_text = f"Futures returns since most recent 5pm Central\n\n{table_str}"
-        body_html = dataframe_to_html_email(out, "Futures returns since most recent 5pm Central")
+    if args.email is not None and len(args.email) > 0:
+        ref_display = ref.strftime("%Y-%m-%d %H:%M") if ref else ""
+        subject = f"Futures returns {period_label} ({ref_display} CT)"
+        title = f"Futures returns {period_label}"
+        body_text = f"{title}\n\n{table_str}"
+        body_html = dataframe_to_html_email(out, title)
         send_email(args.email, subject, body_text, body_html=body_html, csv_path=args.output)
-        print(f"Report sent to {args.email}", file=sys.stderr)
+        print(f"Report sent to {', '.join(args.email)}", file=sys.stderr)
 
     return 0
 

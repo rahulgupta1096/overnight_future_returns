@@ -1,12 +1,14 @@
-name: Weekday Futures Return Email
+name: Futures Return Email
 
 on:
   schedule:
-    - cron: "0 11 * * 1-5"
+    - cron: "0 11 * * 1-5"   # Weekdays 6am ET (11 UTC)
+    - cron: "0 11 * * 6"     # Saturday 6am ET (11 UTC)
   workflow_dispatch:
 
 jobs:
-  run-script:
+  weekday-run:
+    if: github.event.schedule == '0 11 * * 1-5'
     runs-on: ubuntu-latest
 
     steps:
@@ -20,11 +22,39 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run weekday script
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           TO_EMAILS: ${{ secrets.TO_EMAILS }}
-        run: python overnight_returns.py futures_input.csv --email rahulgupta1096@gmail.com
+        run: |
+          python overnight_returns.py futures_input.csv \
+          --email rahulgupta1096@gmail.com dianabgriffin11@gmail.com
+
+  saturday-run:
+    if: github.event.schedule == '0 11 * * 6'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Saturday WTD script
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          python overnight_returns.py futures_input.csv \
+          --period mtd \
+          --email rahulgupta1096@gmail.com dianabgriffin11@gmail.com
