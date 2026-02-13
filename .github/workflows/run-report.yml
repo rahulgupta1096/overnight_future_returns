@@ -31,7 +31,7 @@ jobs:
           TO_EMAILS: ${{ secrets.TO_EMAILS }}
         run: |
           python overnight_returns.py futures_input.csv \
-          --email rahulgupta1096@gmail.com
+          --email rahulgupta1096@gmail.com dianabgriffin11@gmail.com
 
   saturday-run:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 11 * * 6'
@@ -57,4 +57,4 @@ jobs:
         run: |
           python overnight_returns.py futures_input.csv \
           --period mtd \
-          --email rahulgupta1096@gmail.com
+          --email rahulgupta1096@gmail.com dianabgriffin11@gmail.com
