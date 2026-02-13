@@ -193,8 +193,8 @@ def send_email(
     """Send an email using SMTP. Credentials from env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD."""
     host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     port = int(os.environ.get("SMTP_PORT", "587"))
-    user = "rahulgupta1096@gmail.com"
-    password = "eyyd eyac rgpn alhu"
+    user = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_APP_PASSWORD")
 
     if not user or not password:
         print(
